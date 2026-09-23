@@ -1,0 +1,15 @@
+# Build output
+build/
+dist/
+ui/build/
+ui/.dart_tool/
+ui/linux/flutter/ephemeral/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Editor / tooling
+.idea/
+*.iml
+.vscode/
