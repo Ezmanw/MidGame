@@ -25,7 +25,7 @@ import signal
 import sys
 import threading
 
-from . import audio, devices, gm
+from . import audio, config, devices, gm
 from .engine import Engine
 
 _write_lock = threading.Lock()
@@ -47,12 +47,15 @@ def inventory():
         "destinations": Engine.list_destinations(),
         "programs": gm.GM_PROGRAMS,
         "families": gm.GM_FAMILIES,
+        "drum_notes": {str(k): v for k, v in gm.GM_DRUM_NOTES.items()},
+        "schema": config.schema(),
         "mic_available": audio.available(),
     }
 
 
 def serve(engine):
     emit("inventory", inventory())
+    emit("config", {"config": engine.get_config()})
     emit("state", engine.state())
 
     for line in sys.stdin:
@@ -81,6 +84,12 @@ def serve(engine):
                 engine.set_mic(msg.get("enabled"), msg.get("source"), msg.get("sink"))
             elif cmd == "connect":
                 engine.connect_to(msg.get("destination"))
+            elif cmd == "set_config":
+                engine.update_config(msg.get("config") or {})
+            elif cmd == "reset_config":
+                engine.reset_config()
+            elif cmd == "get_config":
+                emit("config", {"config": engine.get_config()})
             elif cmd == "list":
                 emit("inventory", inventory())
             elif cmd == "state":
@@ -104,13 +113,17 @@ def run_cli(engine, args):
     print(f"Controller : {state['device_name']}  ({state['device']})")
     for extra in state["extra_devices"]:
         print(f"             + {extra}")
-    print(f"MIDI out   : '{engine.__class__.__module__.split('.')[0]}' port "
-          f"\"Gamepad MIDI\", channel {state['channel']} ({state['mode']})")
+    print(f"MIDI out   : \"Gamepad MIDI\", channel {state['channel']} "
+          f"({state['mode']})")
     if state["mode"] == "melodic":
         print(f"Program    : {engine.program} - {gm.program_name(engine.program)}")
     if state["mic_enabled"]:
-        print(f"Microphone : {state['mic_source'] or 'default'} "
-              f"(left stick Y shifts pitch, left stick X fades level)")
+        print(f"Microphone : {state['mic_source'] or 'default'}"
+              f"{'' if state['mic_monitor'] else '  (monitoring off)'}"
+              f"{'' if state['mic_pitch_follow'] else '  (pitch follow off)'}")
+    if state["combine_output"]:
+        print(f"Output     : combined into '{state['bus_sink']}'")
+    print(f"Bindings   : {config.CONFIG_PATH}")
     print("Ctrl-C to quit.")
 
     stop = threading.Event()
@@ -137,6 +150,12 @@ def main(argv=None):
     ap.add_argument("--mic-source", help="PipeWire source name for the microphone")
     ap.add_argument("--connect", metavar="DEST",
                     help="ALSA client to auto-connect to, e.g. 'FLUID Synth'")
+    ap.add_argument("--combine-output", action="store_true",
+                    help="collect the synth and mic into one virtual output sink")
+    ap.add_argument("--no-mic-monitor", action="store_true",
+                    help="run the mic chain muted (no monitoring, no feedback)")
+    ap.add_argument("--no-mic-pitch", action="store_true",
+                    help="do not let the stick pitch-shift the microphone")
     ap.add_argument("--no-grab", action="store_true",
                     help="do not take exclusive control of the controller")
     args = ap.parse_args(argv)
@@ -163,6 +182,12 @@ def main(argv=None):
     engine.mic_enabled = args.mic
     engine.mic_source = args.mic_source
     engine.grab = not args.no_grab
+    if args.combine_output:
+        engine.cfg.setdefault("output", {})["combine"] = True
+    if args.no_mic_monitor:
+        engine.cfg.setdefault("mic", {})["monitor"] = False
+    if args.no_mic_pitch:
+        engine.cfg.setdefault("mic", {})["pitch_follow"] = False
 
     if args.serve:
         serve(engine)

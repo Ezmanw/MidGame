@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'backend.dart';
+import 'widgets/bindings_page.dart';
 import 'widgets/cards.dart';
 import 'theme.dart';
 import 'widgets/program_picker.dart';
@@ -174,12 +175,14 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(height: 12),
               OutputCard(
+                state: state,
                 destinations: inv.destinations,
                 selected: _destination,
                 onChanged: (v) {
                   setState(() => _selectedDestination = v);
                   backend.connectTo(v);
                 },
+                onCombineChanged: backend.setCombineOutput,
               ),
               const SizedBox(height: 12),
               SoundCard(
@@ -201,6 +204,8 @@ class _HomePageState extends State<HomePage> {
                   setState(() => _selectedSource = v);
                   backend.setMic(source: v);
                 },
+                onMonitorChanged: (v) => backend.setMicOption(monitor: v),
+                onPitchFollowChanged: (v) => backend.setMicOption(pitchFollow: v),
               ),
               const SizedBox(height: 12),
               ActivityCard(
@@ -212,7 +217,21 @@ class _HomePageState extends State<HomePage> {
                 isMelodic: state.isMelodic,
               ),
               const SizedBox(height: 12),
-              const MappingCard(),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.tune),
+                  title: const Text('Controls'),
+                  subtitle: const Text(
+                      'Change what every button, stick and the touchpad do'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => BindingsPage(backend: backend),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),

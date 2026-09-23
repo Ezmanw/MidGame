@@ -14,6 +14,78 @@ class NamedItem {
   final bool isDefault;
 }
 
+/// One remappable control or action, as described by the backend schema.
+class SchemaItem {
+  const SchemaItem({required this.key, required this.label, this.detail});
+
+  final String key;
+  final String label;
+  final String? detail;
+
+  factory SchemaItem.fromJson(Map<String, dynamic> j) => SchemaItem(
+        key: j['key'] as String,
+        label: j['label'] as String,
+        detail: j['detail'] as String?,
+      );
+}
+
+/// What the bindings editor can offer.
+class BindingSchema {
+  const BindingSchema({
+    this.buttons = const [],
+    this.axes = const [],
+    this.actions = const [],
+    this.path = '',
+  });
+
+  final List<SchemaItem> buttons;
+  final List<SchemaItem> axes;
+  final List<SchemaItem> actions;
+  final String path;
+
+  factory BindingSchema.fromJson(Map<String, dynamic> j) {
+    List<SchemaItem> items(String key) => [
+          for (final i in (j[key] as List? ?? []))
+            SchemaItem.fromJson(i as Map<String, dynamic>),
+        ];
+    return BindingSchema(
+      buttons: items('buttons'),
+      axes: items('axes'),
+      actions: items('actions'),
+      path: j['path'] as String? ?? '',
+    );
+  }
+}
+
+/// The stored configuration, as the backend last reported it.
+class EngineConfig {
+  const EngineConfig(this.raw);
+
+  final Map<String, dynamic> raw;
+
+  int? binding(String mode, String key) {
+    final table = raw[mode];
+    if (table is! Map) return null;
+    final value = table[key];
+    return value is int ? value : null;
+  }
+
+  List<String> actions(String axis) {
+    final axes = raw['axes'];
+    if (axes is! Map) return const [];
+    final list = axes[axis];
+    if (list is! List) return const [];
+    return [for (final a in list) a as String];
+  }
+
+  bool hasAction(String axis, String action) => actions(axis).contains(action);
+
+  bool inverted(String axis) {
+    final inv = raw['invert'];
+    return inv is Map && inv[axis] == true;
+  }
+}
+
 /// Everything the backend knows about the machine, refreshed on demand.
 class Inventory {
   const Inventory({
@@ -23,6 +95,8 @@ class Inventory {
     this.sinks = const [],
     this.programs = const [],
     this.families = const [],
+    this.drumNotes = const {},
+    this.schema = const BindingSchema(),
     this.micAvailable = false,
   });
 
@@ -32,6 +106,8 @@ class Inventory {
   final List<NamedItem> sinks;
   final List<String> programs;
   final List<String> families;
+  final Map<String, String> drumNotes;
+  final BindingSchema schema;
   final bool micAvailable;
 
   factory Inventory.fromJson(Map<String, dynamic> j) {
@@ -65,6 +141,12 @@ class Inventory {
       sinks: audio('sinks'),
       programs: [for (final p in (j['programs'] as List? ?? [])) p as String],
       families: [for (final f in (j['families'] as List? ?? [])) f as String],
+      drumNotes: {
+        for (final e in (j['drum_notes'] as Map? ?? {}).entries)
+          e.key as String: e.value as String,
+      },
+      schema: BindingSchema.fromJson(
+          (j['schema'] as Map?)?.cast<String, dynamic>() ?? const {}),
       micAvailable: j['mic_available'] as bool? ?? false,
     );
   }
@@ -85,6 +167,12 @@ class EngineState {
     this.micRunning = false,
     this.micSource,
     this.micAvailable = false,
+    this.micMonitor = true,
+    this.micPitchFollow = true,
+    this.micShiftRange = 12,
+    this.combineOutput = false,
+    this.busSink,
+    this.hasTouchpad = false,
     this.bend = 0,
   });
 
@@ -100,6 +188,12 @@ class EngineState {
   final bool micRunning;
   final String? micSource;
   final bool micAvailable;
+  final bool micMonitor;
+  final bool micPitchFollow;
+  final int micShiftRange;
+  final bool combineOutput;
+  final String? busSink;
+  final bool hasTouchpad;
   final double bend;
 
   bool get isMelodic => mode == 'melodic';
@@ -117,6 +211,12 @@ class EngineState {
         micRunning: j['mic_running'] as bool? ?? false,
         micSource: j['mic_source'] as String?,
         micAvailable: j['mic_available'] as bool? ?? false,
+        micMonitor: j['mic_monitor'] as bool? ?? true,
+        micPitchFollow: j['mic_pitch_follow'] as bool? ?? true,
+        micShiftRange: (j['mic_shift_range'] as num? ?? 12).round(),
+        combineOutput: j['combine_output'] as bool? ?? false,
+        busSink: j['bus_sink'] as String?,
+        hasTouchpad: j['has_touchpad'] as bool? ?? false,
         bend: (j['bend'] as num? ?? 0).toDouble(),
       );
 }
@@ -130,6 +230,7 @@ class Backend extends ChangeNotifier {
 
   Inventory inventory = const Inventory();
   EngineState state = const EngineState();
+  EngineConfig config = const EngineConfig({});
   String? error;
   bool connecting = false;
 
@@ -222,6 +323,9 @@ class Backend extends ChangeNotifier {
     switch (msg['event'] as String?) {
       case 'inventory':
         inventory = Inventory.fromJson(msg);
+      case 'config':
+        final raw = msg['config'];
+        if (raw is Map) config = EngineConfig(raw.cast<String, dynamic>());
       case 'state':
       case 'started':
       case 'stopped':
@@ -262,6 +366,38 @@ class Backend extends ChangeNotifier {
   void setMode(String mode) => _send({'cmd': 'set_mode', 'mode': mode});
   void setProgram(int program) => _send({'cmd': 'set_program', 'program': program});
   void connectTo(String? destination) => _send({'cmd': 'connect', 'destination': destination});
+
+  void setConfig(Map<String, dynamic> patch) =>
+      _send({'cmd': 'set_config', 'config': patch});
+
+  void resetConfig() => _send({'cmd': 'reset_config'});
+
+  void setBinding(String mode, String key, int? note) =>
+      setConfig({mode: {key: note}});
+
+  void toggleAction(String axis, String action, bool on) {
+    final next = [...config.actions(axis)];
+    if (on) {
+      if (!next.contains(action)) next.add(action);
+    } else {
+      next.remove(action);
+    }
+    setConfig({'axes': {axis: next}});
+  }
+
+  void setInvert(String axis, bool value) => setConfig({'invert': {axis: value}});
+
+  void setMicOption({bool? monitor, bool? pitchFollow, int? shiftRange}) =>
+      setConfig({
+        'mic': {
+          if (monitor != null) 'monitor': monitor,
+          if (pitchFollow != null) 'pitch_follow': pitchFollow,
+          if (shiftRange != null) 'shift_range': shiftRange,
+        }
+      });
+
+  void setCombineOutput(bool value) =>
+      setConfig({'output': {'combine': value}});
 
   void setMic({bool? enabled, String? source, String? sink}) => _send({
         'cmd': 'set_mic',

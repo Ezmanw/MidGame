@@ -182,27 +182,52 @@ class ControllerCard extends StatelessWidget {
 class OutputCard extends StatelessWidget {
   const OutputCard({
     super.key,
+    required this.state,
     required this.destinations,
     required this.selected,
     required this.onChanged,
+    required this.onCombineChanged,
   });
 
+  final EngineState state;
   final List<NamedItem> destinations;
   final String? selected;
   final ValueChanged<String?> onChanged;
+  final ValueChanged<bool> onCombineChanged;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return SectionCard(
       icon: Icons.piano_outlined,
       title: 'MIDI output',
       subtitle: 'Where the notes go. Start a synth first if the list is empty.',
-      child: _Dropdown(
-        label: 'Send to',
-        items: destinations,
-        value: selected,
-        emptyHint: 'No synth or DAW listening',
-        onChanged: onChanged,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _Dropdown(
+            label: 'Send to',
+            items: destinations,
+            value: selected,
+            emptyHint: 'No synth or DAW listening',
+            onChanged: onChanged,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: state.combineOutput,
+            onChanged: onCombineChanged,
+            title: const Text('One combined output'),
+            subtitle: Text(
+              state.busSink == null
+                  ? 'Collect the synth and the microphone into a single audio '
+                    'device, handy for recording or streaming'
+                  : 'Synth and microphone are going to "MidGame Output". '
+                    'Pick that device in OBS or your recorder',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -294,6 +319,8 @@ class MicrophoneCard extends StatelessWidget {
     required this.available,
     required this.onToggle,
     required this.onSourceChanged,
+    required this.onMonitorChanged,
+    required this.onPitchFollowChanged,
   });
 
   final EngineState state;
@@ -302,6 +329,8 @@ class MicrophoneCard extends StatelessWidget {
   final bool available;
   final ValueChanged<bool> onToggle;
   final ValueChanged<String?> onSourceChanged;
+  final ValueChanged<bool> onMonitorChanged;
+  final ValueChanged<bool> onPitchFollowChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -330,7 +359,26 @@ class MicrophoneCard extends StatelessWidget {
                     emptyHint: 'No microphone found',
                     onChanged: onSourceChanged,
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: state.micMonitor,
+                    onChanged: onMonitorChanged,
+                    title: const Text('Hear myself'),
+                    subtitle: const Text(
+                        'Off mutes the mic through your speakers, which stops '
+                        'feedback howling when they are close by'),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: state.micPitchFollow,
+                    onChanged: onPitchFollowChanged,
+                    title: const Text('Stick bends my voice'),
+                    subtitle: Text(
+                        'Off leaves the mic at its natural pitch. On, a stick '
+                        'shifts it up to ${state.micShiftRange} semitones'),
+                  ),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       Icon(Icons.info_outline,
@@ -339,8 +387,8 @@ class MicrophoneCard extends StatelessWidget {
                       Expanded(
                         child: Text(
                           'At rest the mic passes straight through with no added '
-                          'latency. Pitch shifting only engages once you move the '
-                          'left stick off centre.',
+                          'latency. Pitch shifting only engages once the stick '
+                          'leaves centre.',
                           style: theme.textTheme.bodySmall
                               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                         ),
@@ -475,51 +523,6 @@ class _Meter extends StatelessWidget {
               textAlign: TextAlign.right, style: theme.textTheme.labelSmall),
         ),
       ],
-    );
-  }
-}
-
-class MappingCard extends StatelessWidget {
-  const MappingCard({super.key});
-
-  static const _rows = [
-    ('Left stick — up/down', 'Pitch bend, and shifts the mic when it is on'),
-    ('Left stick — left/right', 'Fades the microphone level'),
-    ('Right stick — up/down', 'Pitch bend only'),
-    ('Face buttons', 'Kick, snare, closed hat, open hat'),
-    ('L1 / R1', 'Crash and ride cymbals'),
-    ('D-pad', 'Toms'),
-    ('L2 / R2 click', 'Hand clap and side stick'),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SectionCard(
-      icon: Icons.help_outline,
-      title: 'Controls',
-      child: Column(
-        children: [
-          for (final (control, meaning) in _rows)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 170,
-                    child: Text(control, style: theme.textTheme.labelMedium),
-                  ),
-                  Expanded(
-                    child: Text(meaning,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

@@ -230,3 +230,104 @@ class MicChain:
             except (OSError, ValueError):
                 return ""
         return ""
+
+
+BUS_SINK_NAME = "midgame_out"
+BUS_DESCRIPTION = "MidGame Output"
+
+
+class OutputBus:
+    """One virtual sink that the synth and the microphone both feed.
+
+    Gives a single stream carrying everything - handy for recording, for
+    streaming software, or just for one volume slider. A loopback sends it on
+    to real speakers so you still hear what you are playing.
+    """
+
+    def __init__(self):
+        self.sink_module = None
+        self.loopback_module = None
+        self.sink_name = BUS_SINK_NAME
+
+    @property
+    def active(self):
+        return self.sink_module is not None
+
+    def setup(self, monitor_sink=None):
+        if self.active:
+            return True
+        if not shutil.which("pactl"):
+            return False
+
+        # Reuse the sink if an earlier run left one behind.
+        if any(s["name"] == BUS_SINK_NAME for s in list_sinks()):
+            self.sink_module = "existing"
+        else:
+            result = subprocess.run(
+                ["pactl", "load-module", "module-null-sink",
+                 f"sink_name={BUS_SINK_NAME}",
+                 f"sink_properties=device.description='{BUS_DESCRIPTION}'"],
+                capture_output=True, text=True)
+            if result.returncode != 0:
+                return False
+            self.sink_module = result.stdout.strip()
+
+        target = monitor_sink
+        if not target:
+            target = next((s["name"] for s in list_sinks()
+                           if s["default"] and s["name"] != BUS_SINK_NAME), None)
+        if target:
+            result = subprocess.run(
+                ["pactl", "load-module", "module-loopback",
+                 f"source={BUS_SINK_NAME}.monitor", f"sink={target}",
+                 "latency_msec=20"],
+                capture_output=True, text=True)
+            if result.returncode == 0:
+                self.loopback_module = result.stdout.strip()
+        return True
+
+    def capture_streams(self, destination=None):
+        """Move the synth's audio onto the bus. Returns the stream names moved."""
+        if not self.active:
+            return []
+        try:
+            raw = subprocess.run(["pactl", "-f", "json", "list", "sink-inputs"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            inputs = json.loads(raw)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return []
+
+        moved = []
+        for stream in inputs:
+            props = stream.get("properties", {})
+            name = (props.get("application.name")
+                    or props.get("media.name") or "")
+            # Only the synth we are actually playing into, never everything.
+            if not _looks_like_synth(name, destination):
+                continue
+            result = subprocess.run(
+                ["pactl", "move-sink-input", str(stream.get("index")), BUS_SINK_NAME],
+                capture_output=True, text=True)
+            if result.returncode == 0:
+                moved.append(name)
+        return moved
+
+    def teardown(self):
+        for module in (self.loopback_module, self.sink_module):
+            if module and module != "existing":
+                subprocess.run(["pactl", "unload-module", module],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.sink_module = None
+        self.loopback_module = None
+
+
+def _looks_like_synth(stream_name, destination=None):
+    """Is this playback stream the synth we are driving?"""
+    name = (stream_name or "").lower()
+    if destination:
+        # "FLUID Synth (8327)" -> match on "fluid".
+        first = destination.split()[0].lower()
+        if first and first in name:
+            return True
+    return any(token in name for token in
+               ("fluidsynth", "fluid synth", "qsynth", "midgame"))

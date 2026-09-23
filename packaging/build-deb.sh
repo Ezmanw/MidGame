@@ -39,7 +39,9 @@ chmod 755 "$STAGE/usr/bin/gamepad-midi"
 # -------------------------------------------------------------------- ui
 if [[ $BUILD_UI -eq 1 ]]; then
     echo "Building the Flutter UI..."
-    ( cd "$ROOT/ui" && flutter build linux --release )
+    # Icon tree-shaking has silently dropped glyphs we reference, leaving
+    # tofu boxes in the UI. The full icon font costs ~1.5MB; keep it.
+    ( cd "$ROOT/ui" && flutter build linux --release --no-tree-shake-icons )
     BUNDLE="$ROOT/ui/build/linux/$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')/release/bundle"
     [[ -d "$BUNDLE" ]] || { echo "UI bundle not found at $BUNDLE" >&2; exit 1; }
     cp -r "$BUNDLE" "$STAGE/usr/lib/gamepad-midi/ui"
